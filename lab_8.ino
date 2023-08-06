@@ -13,7 +13,7 @@
 #include <ArduinoJson.h>  // Incluye la biblioteca ArduinoJSON
 
 
-// Valores para conectarse a internet.
+// Valores para conectarse a la red WiFi.
 const char* ssid = "Harold.V";
 const char* password = "1234567890.";
 
@@ -23,15 +23,14 @@ const int ledPin = D2;
 
 // topicos de salidad y entrada
 const char* outTopic = "mobile/mensajes";
-//const char* inTopic = "sensor/command";
-const char* inTopic = "mobile/mensajes";
+const char* inTopic = "sensor/command";
 
+/*******************************************************/
 // valor que se espera del topico de entrada para ajustar
 // los valores de luminicencia.
-const int inValue = 20;
-
+int inValue = 30;
 // contador para controlar los envios cada 30 sec.
-int contadorSec = 30;
+unsigned long lastSendTime = 0;
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
@@ -48,11 +47,8 @@ void callback(char * topic, byte * payload, unsigned int length) {
   for (int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
-  Serial.println(message);
-
-  /*
-  const size_t capacity = JSON_OBJECT_SIZE(3);
-  DynamicJsonDocument jsonDoc(capacity);
+  
+  StaticJsonDocument<200> jsonDoc;
   
   DeserializationError error = deserializeJson(jsonDoc, message);
 
@@ -61,10 +57,13 @@ void callback(char * topic, byte * payload, unsigned int length) {
     Serial.println(error.c_str());
     return;
   }
-  
-  String state = jsonDoc["message"];
-  Serial.println(state);
-  */
+
+  /* Obtenemos el valor y lo almacenamos en una variable.*/
+  String valueStr = jsonDoc["value"];  
+  //String valueStr = "80";
+  inValue = valueStr.toInt();
+  //intValue = 100;
+  Serial.println(inValue);
 }
 
 /* Se instanc */
@@ -121,7 +120,7 @@ void reconnect() {
 /**********************/
 void getDateTime(unsigned long epochTime, char* dateTimeString) {
   // 5 es el offset para obtener la hora de acuerdo a nuesa zona horario.
-  epochTime += 5 * 3600;
+  epochTime -= 5 * 3600;
 
   // calcular los componentes de fecha y hora
   int year, month, day, hour, minute, second;
@@ -173,7 +172,7 @@ year = 1970;
   day = days + 1; // Sumar 1 para ajustar el día al valor correcto
 
   // Formatear la fecha y hora en una cadena
-  sprintf(dateTimeString, "%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second);
+  sprintf(dateTimeString, "%02d-%02d-%04d %02d:%02d:%02d", month, day, year, hour, minute, second);
   
 }
 
@@ -185,7 +184,7 @@ void setup() {
   // inicializamos el led del esp8266
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(ledPin, OUTPUT);
-
+  
   setup_wifi();
   delay(1000);
   if (!SPIFFS.begin()) {
@@ -238,36 +237,33 @@ void loop() {
   }
   client.loop();
   
-  
   timeClient.update();
   int lightSensor = analogRead(sensorPin);
   StaticJsonDocument<200> jsonDoc;
   unsigned long epochTime = timeClient.getEpochTime();
-  
-
   /* Cada 30 segundos envimaos un valor al topico*/
   /* Obtenemose el valor del sensor y creamos el documento json para enviarlo. */
   char formattedTime[30];
   getDateTime(epochTime, formattedTime);
   
   jsonDoc["Timestamp"] = formattedTime;
-  jsonDoc["value"] = lightSensor;
+  jsonDoc["Value"] = lightSensor;
   jsonDoc["Unit"] = "Lx";
   jsonDoc["Notes"] = "TEST";
 
   // Serealizar el objeto JSON
   String jsonStr;
   serializeJson(jsonDoc, jsonStr);
+  // empleammos analogWrite para enviar el valor que recibimos del servicio.
+  analogWrite(ledPin, inValue);
 
-  if ( contadorSec == 30 ) {
+  if ( millis() - lastSendTime > 30000 ) {
     Serial.println("Mensaje Enviado: [mobile/mensajes]");
     Serial.println(jsonStr.c_str());
     client.publish(outTopic, jsonStr.c_str());  
-    contadorSec = 1;
+    lastSendTime = millis();
   }
- 
 
-  contadorSec = contadorSec + 1;
   digitalWrite(LED_BUILTIN, HIGH); 
   delay(1000); // esperar por 1 sec
   digitalWrite(LED_BUILTIN, LOW);
